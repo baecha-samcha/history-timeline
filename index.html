@@ -14,7 +14,7 @@
 <section id="auth-view" class="view">
   <div class="auth-card">
     <h1>IB History Timeline</h1>
-    <p class="auth-sub">1850 – 2000 · 개인 타임라인</p>.,
+    <p class="auth-sub">공유 역사 연표</p>
     <form id="auth-form">
       <label>아이디<input type="text" id="auth-username" autocomplete="username" required /></label>
       <label>비밀번호<input type="password" id="auth-password" autocomplete="current-password" required /></label>
@@ -33,8 +33,10 @@
   <header class="toolbar">
     <div class="tb-group">
       <span class="brand">IB Timeline</span>
+      <button id="btn-list" class="btn" aria-controls="legend" aria-expanded="false">목록</button>
       <span class="user-badge" id="user-badge"></span>
     </div>
+    <div class="toolbar-controls">
     <div class="tb-group">
       <button id="btn-add-period" class="btn" title="단축키 Alt+1">+ 연도(기간) 추가</button>
       <button id="btn-add-event"  class="btn" title="단축키 Alt+2">+ 포인트(사건) 추가</button>
@@ -61,14 +63,17 @@
       <span id="sync-status" class="sync-status" title="동기화 상태"></span>
       <button id="btn-logout" class="btn btn-ghost">로그아웃</button>
     </div>
+    </div>
   </header>
 
   <main class="workspace">
     <div id="timeline-scroll" class="timeline-scroll">
       <svg id="timeline-svg" xmlns="http://www.w3.org/2000/svg"></svg>
     </div>
+    <span id="mini-year" class="mini-year" aria-label="현재 연도"></span>
     <aside id="legend" class="legend">
-      <div class="legend-title">목록</div>
+      <div class="legend-title">목록 <button id="legend-close" class="btn" aria-label="목록 닫기">닫기</button></div>
+      <input id="legend-search" type="search" placeholder="제목·태그 검색" aria-label="목록 제목 및 태그 검색" />
       <div class="legend-sub">연도(기간)</div>
       <ul id="list-periods"></ul>
       <div class="legend-sub">포인트</div>

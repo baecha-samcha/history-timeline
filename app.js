@@ -23,14 +23,14 @@ const YEAR_MIN = 1850;
 const YEAR_MAX = 2000;
 const CACHE_KEY = "ibhistory.cache.v2";
 
-const PX_PER_MONTH = { 12: 3, 6: 6, 3: 12, 1: 36, 0.5: 72, 0.333: 108, 0.1: 360, 0.033: 1080 };
+const PX_PER_MONTH = { 12: 4.5, 6: 6, 3: 12, 1: 36, 0.5: 72, 0.333: 108, 0.1: 360, 0.033: 1080 };
 
 const RULER_H    = 46;
 const PERIOD_H   = 24;
-const EVENT_ROW_H = 34;
+const EVENT_ROW_H = 38;
 const LEFT_PAD   = 40;
 const RIGHT_PAD  = 40;
-const TOP_PAD    = 10;
+const TOP_PAD    = 32;
 
 const $   = (sel, root = document) => root.querySelector(sel);
 const $$  = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -583,12 +583,29 @@ function colorMetrics(color) {
 function needsLightOutline(color) {
   return colorMetrics(color).luminance < 0.2;
 }
+function contrastRatio(a, b) {
+  const x = colorMetrics(a).luminance, y = colorMetrics(b).luminance;
+  return (Math.max(x, y) + .05) / (Math.min(x, y) + .05);
+}
 function readableTagTextColor(color) {
-  if (document.documentElement.dataset.theme !== "dark") return color;
-  const metrics = colorMetrics(color);
-  if (metrics.luminance >= 0.32) return color;
-  if (metrics.saturation < 0.12) return "#f3f4f6";
-  return `hsl(${Math.round(metrics.hue)} 85% 72%)`;
+  const tokens = getComputedStyle(document.documentElement);
+  const backgrounds = ["--cream", "--oat-light"].map(token => tokens.getPropertyValue(token).trim());
+  const readable = value => backgrounds.every(background => contrastRatio(value, background) >= 4.5);
+  if (readable(color)) return color;
+  const dark = document.documentElement.dataset.theme === "dark";
+  const hex = /^#[0-9a-f]{6}$/i.test(color) ? color : "#777777";
+  const rgb = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+  for (let step = 1; step <= 20; step++) {
+    const result = "#" + rgb.map(c => Math.round(c + ((dark ? 255 : 0) - c) * step / 20).toString(16).padStart(2, "0")).join("");
+    if (readable(result)) return result;
+  }
+  return dark ? "#ffffff" : "#111111";
+}
+function formatReadDate(value) { return normalizeDate(value).replaceAll("-", "."); }
+const textMeasure = document.createElement("canvas").getContext("2d");
+function measureLabel(text, size = 14, weight = 500) {
+  textMeasure.font = `${weight} ${size}px ${getComputedStyle(document.body).fontFamily}`;
+  return Math.ceil(textMeasure.measureText(text).width);
 }
 
 /* ---------- 좌표 & 레이아웃 ---------- */
@@ -618,7 +635,7 @@ function assignRows(segments) {
   return { rowMap: out, rowCount: Math.max(1, rows.length) };
 }
 function estimateEventWidth(ev) {
-  return Math.max(60, ((ev.title || "") + "  " + (ev.date || "")).length * 7 + 20);
+  return measureLabel(ev.title || "(제목 없음)") + 24;
 }
 function periodBounds(p, pxm) {
   const x1 = xFromDate(p.startDate, pxm);
@@ -626,9 +643,16 @@ function periodBounds(p, pxm) {
   return { x1: Math.min(x1, x2), x2: Math.max(x1, x2) };
 }
 function estimatePeriodLabelWidth(p) {
-  return Math.max(80, periodLabelText(p).length * 7 + 16);
+  return measureLabel(periodLabelText(p), 13, 700) + 16;
 }
-
+function periodLabelX(p, pxm) {
+  const { x1, x2 } = periodBounds(p, pxm);
+  return x2 - x1 >= estimatePeriodLabelWidth(p) ? x1 + 6 : x1 + Math.max(8, x2 - x1) + 8;
+}
+function contentWidth(pxm) {
+  return Math.max(totalWidth(pxm), ...State.data.flows.map(f => measureLabel(f.title || "(무제 흐름)", 12) + LEFT_PAD + RIGHT_PAD), ...visibleEvents().map(e => xFromDate(e.date, pxm) + estimateEventWidth(e) + RIGHT_PAD),
+    ...visiblePeriods().map(p => periodLabelX(p, pxm) + estimatePeriodLabelWidth(p) + RIGHT_PAD));
+}
 /* ---------- 렌더: 눈금자 ---------- */
 function renderRuler(svg, pxm, height, opts = {}) {
   const unit = opts.unit || State.zoom;
@@ -652,7 +676,7 @@ function renderRuler(svg, pxm, height, opts = {}) {
   for (let y = startYear; y <= endYear; y++) {
     const x = xFromYear(y, pxm);
     g.appendChild(el("line", { x1: x, y1: 0, x2: x, y2: height, class: "grid-line year" }));
-    g.appendChild(el("text", { x: x + 2, y: 14, class: "tick-label year", text: String(y) }));
+    g.appendChild(el("text", { x: x + 2, y: 19, class: "tick-label year", text: String(y) }));
     if (unit >= 1 && unit < 12) {
       for (let m = unit; m < 12; m += unit) {
         const xm = xFromDate(`${y}-${String(m + 1).padStart(2, "0")}-01`, pxm);
@@ -678,9 +702,11 @@ function renderRuler(svg, pxm, height, opts = {}) {
 
 /* ---------- 렌더: 기간 ---------- */
 function periodLabelText(p) {
-  const s = (p.startDate || "").slice(0, 10);
-  const e = (p.endDate   || "").slice(0, 10);
-  return `${p.title || "기간"} (${s} ~ ${e})`;
+  const title = p.title || "기간";
+  if (State.zoom >= 6) return title;
+  const month = d => (d || "").slice(0, 7).replace("-", ".");
+  if (State.zoom >= 1) return `${title} (${month(p.startDate)} ~ ${month(p.endDate)})`;
+  return `${title} (${formatReadDate(p.startDate)} ~ ${formatReadDate(p.endDate)})`;
 }
 function renderPeriods(svg, pxm, yStart, layout = null) {
   const periods = visiblePeriods();
@@ -701,7 +727,7 @@ function renderPeriods(svg, pxm, yStart, layout = null) {
       const rect = el("rect", {
         x: x1, y: y + index * stripeH, width: w, height: stripeH + 0.5,
         rx: colors.length === 1 ? 4 : 0, fill: color,
-        "fill-opacity": "0.82", stroke: "#1f2937", "stroke-opacity": "0.18",
+        "fill-opacity": "1", stroke: "#1f2937", "stroke-opacity": "0.18",
         class: "period-rect"
       });
       rect.addEventListener("click", () => openPeriodDetail(p));
@@ -711,10 +737,13 @@ function renderPeriods(svg, pxm, yStart, layout = null) {
     if (colors.some(needsLightOutline)) {
       g.appendChild(el("rect", { x: x1, y, width: w, height: PERIOD_H, rx: 4, fill: "none", stroke: "#fff", "stroke-width": 1.5, "pointer-events": "none" }));
     }
-    g.appendChild(el("text", {
-      x: x1 + 6, y: y + PERIOD_H - 7, class: "period-label", text: label,
-      style: "fill:#fff;stroke:#111;stroke-width:3px;paint-order:stroke;stroke-linejoin:round"
-    }));
+    const labelNode = el("text", {
+      x: periodLabelX(p, pxm), y: y + PERIOD_H - 7, class: "period-label", text: label,
+      style: periodLabelX(p, pxm) < x1 + w ? `fill:${contrastRatio(colors[0], "#ffffff") >= contrastRatio(colors[0], "#111111") ? "#ffffff" : "#111111"};stroke:${colors[0]}` : ""
+    });
+    labelNode.addEventListener("click", () => openPeriodDetail(p));
+    labelNode.addEventListener("contextmenu", e => { e.preventDefault(); openPeriodEdit(p); });
+    g.appendChild(labelNode);
   });
   svg.appendChild(g);
   return { yEnd: yStart + rowCount * EVENT_ROW_H, positions };
@@ -790,31 +819,31 @@ function renderFlows(svg, positions) {
     for (let i = 0; i < pts.length - 1; i++) {
       const a = pts[i], b = pts[i + 1];
       const dx = b.x - a.x;
-      const midY = Math.min(a.y, b.y) - 40 - Math.min(60, Math.abs(dx) * 0.15);
+      const midY = Math.max(RULER_H + 20, Math.min(a.y, b.y) - 40 - Math.min(60, Math.abs(dx) * 0.15));
       colors.forEach((color, colorIndex) => {
         const offset = (colorIndex - (colors.length - 1) / 2) * 4;
         const markerId = `arr_${f.id}_${colorIndex}`;
         ensureArrowDefs(svg, color, markerId);
         const d = `M ${a.x} ${a.y - 6 + offset} Q ${(a.x + b.x) / 2} ${midY + offset} ${b.x} ${b.y - 6 + offset}`;
-        pathsGroup.appendChild(el("path", { d, class: "flow-path-outline", fill: "none", stroke: "#fff", "stroke-width": 5, "stroke-linecap": "round", "pointer-events": "none" }));
-        const path = el("path", { d, class: "flow-path", fill: "none", stroke: color, "stroke-width": 2, "stroke-linecap": "round", "marker-end": `url(#${markerId})`, "data-flow": f.id });
-        path.addEventListener("mouseenter", e => showTooltip(e, f));
+
+        const path = el("path", { d, class: "flow-path", fill: "none", stroke: color, "stroke-width": 1.5, "stroke-linecap": "round", "marker-end": `url(#${markerId})`, "data-flow": f.id });
+        path.addEventListener("mouseenter", e => { g.classList.add("has-hover"); pathsGroup.querySelectorAll("[data-flow]").forEach(p => p.classList.toggle("highlight", p.dataset.flow === f.id)); showTooltip(e, f); });
         path.addEventListener("mousemove", moveTooltip);
-        path.addEventListener("mouseleave", hideTooltip);
+        path.addEventListener("mouseleave", () => { g.classList.remove("has-hover"); pathsGroup.querySelectorAll(".highlight").forEach(p => p.classList.remove("highlight")); hideTooltip(); });
         path.addEventListener("click", () => openFlowEdit(f));
         pathsGroup.appendChild(path);
       });
       if (i === 0) {
-        const title = el("text", { x: (a.x + b.x) / 2, y: midY - 7, class: "flow-label", "text-anchor": "middle", text: f.title || "(무제 흐름)" });
-        title.addEventListener("mouseenter", e => { labelsGroup.appendChild(title); showTooltip(e, f); });
+        const title = el("text", { x: Math.max(LEFT_PAD + measureLabel(f.title || "(무제 흐름)", 12) / 2, (a.x + b.x) / 2), y: RULER_H + TOP_PAD + (State.currentLayoutRows + State.data.flows.indexOf(f)) * EVENT_ROW_H + 18, class: "flow-label", "text-anchor": "middle", text: f.title || "(무제 흐름)" });
+        title.addEventListener("mouseenter", e => { g.classList.add("has-hover"); pathsGroup.querySelectorAll("[data-flow]").forEach(p => p.classList.toggle("highlight", p.dataset.flow === f.id)); showTooltip(e, f); });
         title.addEventListener("mousemove", moveTooltip);
-        title.addEventListener("mouseleave", hideTooltip);
+        title.addEventListener("mouseleave", () => { g.classList.remove("has-hover"); pathsGroup.querySelectorAll(".highlight").forEach(p => p.classList.remove("highlight")); hideTooltip(); });
         title.addEventListener("click", () => openFlowEdit(f));
         labelsGroup.appendChild(title);
       }
     }
   });
-  svg.appendChild(g);
+  svg.insertBefore(g, svg.querySelector(".periods"));
 }
 
 function showTooltip(e, flow) {
@@ -838,25 +867,31 @@ function combinePositions(periodPos, eventPos) {
   return out;
 }
 function getTimelineLayout(pxm) {
-  const segments = [
-    ...visiblePeriods().map(p => {
-      const b = periodBounds(p, pxm);
-      return { id: `period:${p.id}`, x1: b.x1, x2: Math.max(b.x2, b.x1 + estimatePeriodLabelWidth(p)) };
-    }),
-    ...visibleEvents().map(e => {
-      const x = xFromDate(e.date, pxm);
-      return { id: `event:${e.id}`, x1: x, x2: x + estimateEventWidth(e) };
-    })
-  ];
-  const combined = assignRows(segments);
-  const periodMap = {}, eventMap = {};
-  visiblePeriods().forEach(p => { periodMap[p.id] = combined.rowMap[`period:${p.id}`] || 0; });
-  visibleEvents().forEach(e => { eventMap[e.id] = combined.rowMap[`event:${e.id}`] || 0; });
-  return {
-    rowCount: combined.rowCount,
-    periodLayout: { rowMap: periodMap, rowCount: combined.rowCount },
-    eventLayout: { rowMap: eventMap, rowCount: combined.rowCount }
-  };
+  const periodMap = {}, eventMap = {}, bands = [];
+  let offset = 0;
+  for (const category of allCategories().filter(c => !State.hiddenCategories.has(c))) {
+    const periods = visiblePeriods().filter(p => catOf(p) === category);
+    const events = visibleEvents().filter(e => catOf(e) === category);
+    const segments = [
+      ...periods.map(p => { const b = periodBounds(p, pxm); return { id: `period:${p.id}`, x1: b.x1 - 6, x2: Math.max(b.x2, periodLabelX(p, pxm) + estimatePeriodLabelWidth(p)) }; }),
+      ...events.map(e => { const x = xFromDate(e.date, pxm); return { id: `event:${e.id}`, x1: x - 6, x2: x + estimateEventWidth(e) }; })
+    ];
+    const assigned = assignRows(segments);
+    bands.push({ category, row: offset, count: assigned.rowCount + 1 });
+    periods.forEach(p => { periodMap[p.id] = offset + 1 + assigned.rowMap[`period:${p.id}`]; });
+    events.forEach(e => { eventMap[e.id] = offset + 1 + assigned.rowMap[`event:${e.id}`]; });
+    offset += assigned.rowCount + 2;
+  }
+  State.currentLayoutRows = offset;
+  return { rowCount: offset + State.data.flows.length + 1, bands,
+    periodLayout: { rowMap: periodMap, rowCount: offset }, eventLayout: { rowMap: eventMap, rowCount: offset } };
+}
+function renderBands(svg, layout, width) {
+  layout.bands.forEach(band => {
+    const y = RULER_H + TOP_PAD + band.row * EVENT_ROW_H;
+    svg.appendChild(el("line", { x1: 0, x2: width, y1: y - 10, y2: y - 10, class: "grid-line major" }));
+    svg.appendChild(el("text", { x: LEFT_PAD, y: y + 16, class: "category-label", text: band.category }));
+  });
 }
 /* ---------- 분류 토글 (ON/OFF 필터) ---------- */
 function renderCategoryFilters() {
@@ -891,18 +926,20 @@ function render() {
   renderCategoryFilters();
   State.timelineRange = getDataTimelineRange();
   const pxm = getPxPerMonth();
-  const width = totalWidth(pxm);
+  const width = contentWidth(pxm);
   const layout = getTimelineLayout(pxm);
   const height = RULER_H + TOP_PAD + layout.rowCount * EVENT_ROW_H + 36;
   svg.setAttribute("width", width);
   svg.setAttribute("height", height);
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   renderRuler(svg, pxm, height);
+  renderBands(svg, layout, width);
   const pY = RULER_H + TOP_PAD;
   const { positions: periodPos } = renderPeriods(svg, pxm, pY, layout.periodLayout);
   const { positions: eventPos } = renderEvents(svg, pxm, pY, layout.eventLayout);
   renderFlows(svg, combinePositions(periodPos, eventPos));
   renderLegend();
+  updateMiniYear();
 }
 
 /* ===========================================================
@@ -933,7 +970,7 @@ function openPeriodDetail(p) {
   const hero = document.createElement("div"); hero.className = "detail-hero";
   const title = document.createElement("h3"); title.textContent = p.title || "기간";
   const date  = document.createElement("div"); date.className = "detail-date";
-  date.textContent = `${p.startDate || ""} ~ ${p.endDate || ""}`;
+  date.textContent = `${formatReadDate(p.startDate)} ~ ${formatReadDate(p.endDate)}`;
   hero.appendChild(title); hero.appendChild(date);
   if (p.colorTagIds && p.colorTagIds.length) hero.appendChild(renderColorTagChips(p.colorTagIds));
   body.appendChild(hero);
@@ -1020,7 +1057,7 @@ function openEventDetail(e) {
   const hero = document.createElement("div"); hero.className = "detail-hero";
   const title = document.createElement("h3"); title.textContent = e.title || "(무제)";
   const date  = document.createElement("div"); date.className = "detail-date";
-  date.textContent = e.date || "";
+  date.textContent = formatReadDate(e.date);
   hero.appendChild(title); hero.appendChild(date);
   if (e.colorTagIds && e.colorTagIds.length) hero.appendChild(renderColorTagChips(e.colorTagIds));
   body.appendChild(hero);
@@ -1164,49 +1201,48 @@ function openFlowEdit(existing = null) {
 
 /* ---------- 목록 ---------- */
 function renderLegend() {
-  const lp = $("#list-periods"); lp.innerHTML = "";
-  visiblePeriods().slice().sort((a, b) => (a.startDate || "").localeCompare(b.startDate || "")).forEach(p => {
-    const li = document.createElement("li");
-    const color = getItemColorBackground(p, "period");
-    const tags = (p.colorTagIds || []).map(id => {
-      const ct = State.data.colorTags.find(t => t.id === id);
-      return ct ? `<small style="color:${readableTagTextColor(ct.color)}">#${escapeHtml(ct.name)}</small>` : "";
-    }).join(" ");
-    li.innerHTML = `<span class="swatch" style="background:${color}"></span><span>${escapeHtml(p.title || "기간")} ${tags} <small>(${p.startDate || ""} ~ ${p.endDate || ""})</small></span>`;
-    li.title = "좌클릭: 상세 / 우클릭: 편집";
-    li.addEventListener("click", () => openPeriodDetail(p));
-    li.addEventListener("contextmenu", e => { e.preventDefault(); openPeriodEdit(p); });
-    lp.appendChild(li);
-  });
-
-  const le = $("#list-events"); le.innerHTML = "";
-  visibleEvents().slice().sort((a, b) => (a.date || "").localeCompare(b.date || "")).forEach(e => {
-    const li = document.createElement("li");
-    const color = getItemColorBackground(e, "event");
-    const tags = (e.colorTagIds || []).map(id => {
-      const ct = State.data.colorTags.find(t => t.id === id);
-      return ct ? `<small style="color:${readableTagTextColor(ct.color)}">#${escapeHtml(ct.name)}</small>` : "";
-    }).join(" ");
-    li.innerHTML = `<span class="swatch" style="background:${color}"></span><span>${escapeHtml(e.title || "(무제)")} ${tags} <small>${e.date || ""}</small></span>`;
-    li.title = "좌클릭: 상세 / 우클릭: 편집";
-    li.addEventListener("click", () => openEventDetail(e));
-    li.addEventListener("contextmenu", ev => { ev.preventDefault(); openEventEdit(e); });
-    le.appendChild(li);
-  });
-
-  const lf = $("#list-flows"); lf.innerHTML = "";
-  const visP = new Set(visiblePeriods().map(p => p.id));
-  const visE = new Set(visibleEvents().map(e => e.id));
-  const flowVisible = f => flowItems(f).some(it => it.type === "period" ? visP.has(it.id) : visE.has(it.id));
-  State.data.flows.filter(flowVisible).forEach(f => {
-    const li = document.createElement("li");
-    const color = getItemColorBackground(f, "flow");
-    const count = flowItems(f).length;
-    li.innerHTML = `<span class="swatch" style="background:${color}"></span><span>${escapeHtml(f.title || "(무제 흐름)")} <small>${count}개</small></span>`;
-    li.addEventListener("click", () => openFlowEdit(f));
-    lf.appendChild(li);
-  });
+  const search = ($("#legend-search").value || "").trim().toLocaleLowerCase();
+  const matches = item => [item.title, ...(item.colorTagIds || []).map(id => State.data.colorTags.find(t => t.id === id)?.name)].join(" ").toLocaleLowerCase().includes(search);
+  const fill = (selector, items, type) => {
+    const list = $(selector); list.replaceChildren();
+    items.filter(matches).forEach(item => {
+      const li = document.createElement("li");
+      const dates = type === "period" ? [item.startDate, item.endDate] : type === "event" ? [item.date] : [];
+      li.innerHTML = `<span class="swatch" style="background:${getItemColorBackground(item, type)}"></span><span class="legend-copy"><span class="legend-item-title">${escapeHtml(item.title || "(무제)")}</span><span class="legend-tags">${(item.colorTagIds || []).map(id => {
+        const tag = State.data.colorTags.find(t => t.id === id);
+        return tag ? `<small style="color:${readableTagTextColor(tag.color)}">#${escapeHtml(tag.name)}</small>` : "";
+      }).join(" ")}</span>${dates.map(date => `<small class="legend-date">${formatReadDate(date)}</small>`).join('<small class="legend-date">~</small>')}</span>`;
+      li.title = `${item.title || "(무제)"} · ${dates.map(formatReadDate).join(" ~ ")} · 우클릭: 편집`;
+      const detail = type === "period" ? openPeriodDetail : type === "event" ? openEventDetail : openFlowEdit;
+      const edit = type === "period" ? openPeriodEdit : type === "event" ? openEventEdit : openFlowEdit;
+      li.tabIndex = 0;
+      li.addEventListener("click", () => detail(item));
+      li.addEventListener("keydown", e => { if (e.key === "Enter") detail(item); });
+      li.addEventListener("contextmenu", e => { e.preventDefault(); edit(item); });
+      list.appendChild(li);
+    });
+  };
+  fill("#list-periods", visiblePeriods().slice().sort((a,b) => a.startDate.localeCompare(b.startDate)), "period");
+  fill("#list-events", visibleEvents().slice().sort((a,b) => a.date.localeCompare(b.date)), "event");
+  const visible = new Set([...visiblePeriods().map(p => `period:${p.id}`), ...visibleEvents().map(e => `event:${e.id}`)]);
+  fill("#list-flows", State.data.flows.filter(f => flowItems(f).some(i => visible.has(`${i.type}:${i.id}`))), "flow");
 }
+function updateMiniYear() {
+  const days = ($("#timeline-scroll").scrollLeft / (getPxPerMonth() / 30.4375));
+  const date = new Date(dateToUtc(State.timelineRange.start) + days * 86400000);
+  $("#mini-year").textContent = `${date.getUTCFullYear()}년`;
+  $$("#timeline-svg .category-label").forEach(label => label.setAttribute("x", $("#timeline-scroll").scrollLeft + LEFT_PAD));
+}
+$("#timeline-scroll").addEventListener("scroll", updateMiniYear, { passive: true });
+$("#legend-search").addEventListener("input", renderLegend);
+$("#btn-list").addEventListener("click", () => {
+  const open = $("#legend").classList.toggle("is-open");
+  $("#btn-list").setAttribute("aria-expanded", String(open));
+});
+$("#legend-close").addEventListener("click", () => {
+  $("#legend").classList.remove("is-open"); $("#btn-list").setAttribute("aria-expanded", "false"); $("#btn-list").focus();
+});
+document.fonts.ready.then(() => { if (!$("#app-view").classList.contains("hidden")) render(); });
 
 /* ===========================================================
    Part 5/5: PNG 내보내기 + 줌 + 부트
@@ -1215,7 +1251,7 @@ function renderLegend() {
 function buildExportSVG() {
   const unit = State.zoom;
   const pxm = getPxPerMonth(unit);
-  const regionW = totalWidth(pxm);
+  const regionW = contentWidth(pxm);
 
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("xmlns", SVG_NS);
@@ -1224,6 +1260,7 @@ function buildExportSVG() {
   const height = RULER_H + TOP_PAD + layout.rowCount * EVENT_ROW_H + 36;
 
   renderRuler(svg, pxm, height, { unit });
+  renderBands(svg, layout, regionW);
   const pY = RULER_H + TOP_PAD;
   const { positions: periodPos } = renderPeriods(svg, pxm, pY, layout.periodLayout);
   const { positions: eventPos } = renderEvents(svg, pxm, pY, layout.eventLayout);
@@ -1235,13 +1272,10 @@ function buildExportSVG() {
   svg.insertBefore(el("rect", { x: 0, y: 0, width: regionW, height, fill: "#ffffff" }), svg.firstChild);
 
   const style = document.createElementNS(SVG_NS, "style");
-  style.textContent = `
-    :root{--timeline-ruler:#f8fafc;--clay-black:#111}
-    .grid-line{stroke:#eef1f5}.grid-line.major{stroke:#cbd5e1}.grid-line.year{stroke:#94a3b8}
-    .tick-label{font:10px sans-serif;fill:#64748b}.tick-label.year{font:700 12px sans-serif;fill:#334155}
-    .period-label{font:600 11px sans-serif;fill:#111}.event-label{font:11px sans-serif;fill:#1f2430}
-    .flow-path{fill:none;stroke-linecap:round}.flow-label{font:600 11px sans-serif;fill:#334155}
-  `;
+  style.textContent = [...document.styleSheets].flatMap(sheet => {
+    try { return [...sheet.cssRules].filter(rule => rule.type === CSSRule.STYLE_RULE).map(rule => rule.cssText); }
+    catch { return []; }
+  }).join("\n") + "\n:root{--white:#fff;--cream:#faf9f7;--clay-black:#111;--text:#111;--timeline-ruler:#f8fafc;--warm-silver:#6b665c;--charcoal:#55534e}";
   svg.insertBefore(style, svg.firstChild);
   return { svg, width: regionW, height };
 }
