@@ -1,10 +1,6 @@
 # IB History Timeline
 
-An interactive web timeline for organizing modern history (1850–2000) as periods, events, and the flows that connect them.
-
-## Purpose
-
-A personal study tool for IB History. Instead of keeping notes as a flat list, periods and events are laid out on a zoomable horizontal timeline so that overlaps, sequences, and cause-and-effect chains are visible at a glance. The UI is in Korean.
+역사의 기간·사건·흐름을 확대 가능한 타임라인에 정리하는 한국어 학습 웹앱입니다. 사건 간 연결을 만들고 색상과 분류로 정리한 뒤 PNG로 내보낼 수 있습니다. 계정으로 접속하며, 로그인한 사용자는 하나의 작업 공간을 함께 편집합니다.
 
 ## Features
 
@@ -19,13 +15,6 @@ A personal study tool for IB History. Instead of keeping notes as a flat list, p
 - Username/password accounts with server-side sessions
 - Offline editing: changes are queued locally and pushed when the browser is back online; other devices' changes are picked up by polling every 3 seconds
 - Installable as a PWA (web app manifest and a network-first service worker)
-
-## Tech stack
-
-- **Frontend:** plain HTML, CSS, and JavaScript (`index.html`, `styles.css`, `app.js`); timeline rendered with SVG
-- **Backend:** Node.js with Express 5 (`server.js`)
-- **Database:** MariaDB via `mysql2` (`db/client.js`, `db/schema.sql`)
-- **Auth:** scrypt password hashing; random bearer tokens stored server-side as SHA-256 hashes, valid for 30 days
 
 ## Running locally
 
@@ -45,25 +34,6 @@ Other scripts:
 - `npm run build` — checks that the required files exist and that the JavaScript files parse
 - `npm run test:integration` — runs `tests/integration.js` against a running server
 
-## Deployment layout
-
-The production instance runs on a Raspberry Pi next to its MariaDB server:
-
-- `deploy/history-timeline.service` — systemd unit that runs `server.js` with environment from `.env`, after `mariadb.service`
-- `deploy/nginx-wiki.conf` — Nginx reverse proxy to `127.0.0.1:3000`, both as `history.baecha.xyz` and under the `/history/` path of the wiki host
-- MariaDB listens only on localhost, so the app is not deployed to an external host (`render.yaml` defines no services)
-
-Updating a deployment:
-
-```bash
-npm ci
-npm run db:migrate
-sudo systemctl restart history-timeline
-curl http://127.0.0.1:3000/api/health
-```
-
-The backend was migrated from Neon PostgreSQL to MariaDB; see [`docs/neon-to-mariadb-migration.md`](docs/neon-to-mariadb-migration.md).
-
 ## Keyboard shortcuts
 
 Active on the main timeline view when no dialog is open and no input field is focused:
@@ -81,8 +51,37 @@ Active on the main timeline view when no dialog is open and no input field is fo
 - **Browser (`localStorage`):** session token, theme, hidden categories, a cached copy of the workspace, and the queue of pending offline changes.
 - **Photos** are stored as data URLs inside the database rows.
 
+## Tech stack
+
+- **Frontend:** plain HTML, CSS, and JavaScript (`index.html`, `styles.css`, `app.js`); timeline rendered with SVG
+- **Backend:** Node.js with Express 5 (`server.js`)
+- **Database:** MariaDB via `mysql2` (`db/client.js`, `db/schema.sql`)
+- **Auth:** scrypt password hashing; random bearer tokens stored server-side as SHA-256 hashes, valid for 30 days
+
+## Deployment layout
+
+The included deployment templates target a Raspberry Pi with a local MariaDB server. Adapt the hostnames and paths to your own environment:
+
+- `deploy/history-timeline.service` — systemd unit that runs `server.js` with environment from `.env`, after `mariadb.service`
+- `deploy/nginx-wiki.conf` — Nginx reverse proxy to `127.0.0.1:3000`, both as `history.baecha.xyz` and under the `/history/` path of the wiki host
+- MariaDB listens only on localhost, so the app is not deployed to an external host (`render.yaml` defines no services)
+
+Updating a deployment:
+
+```bash
+npm ci
+npm run db:migrate
+sudo systemctl restart history-timeline
+curl http://127.0.0.1:3000/api/health
+```
+
+The backend was migrated from Neon PostgreSQL to MariaDB; see [`docs/neon-to-mariadb-migration.md`](docs/neon-to-mariadb-migration.md).
+
 ## Security and configuration notes
 
 - `DATABASE_URL` is required; the server will not start without it. Keep real credentials only in `.env`, which is git-ignored (`.env.example` is the only committed template).
 - Registration is open to anyone who can reach the server, and every account can edit the shared workspace.
 - Express serves static files from the working directory. Dotfiles such as `.env` are not served by default, but do not place other secrets in the project directory.
+## Purpose
+
+A personal study tool for IB History. Instead of keeping notes as a flat list, periods and events are laid out on a zoomable horizontal timeline so that overlaps, sequences, and cause-and-effect chains are visible at a glance. The UI is in Korean.
